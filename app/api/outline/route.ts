@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { askClaude, extractJson } from "@/lib/claude";
+import { askModel, extractJson } from "@/lib/model";
 import { outlinePrompt } from "@/lib/prompts";
 
 export const maxDuration = 120;
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const text = await askClaude(
+    const text = await askModel(
       outlinePrompt(idea, patterns, format ?? "short-form video script, 30-60 seconds"),
       "medium"
     );
