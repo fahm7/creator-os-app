@@ -5,8 +5,10 @@ import { profilePrompt } from "@/lib/prompts";
 export const maxDuration = 120;
 
 type Profile = {
+  niche: string;
   patterns: { claim: string; evidence: string }[];
   themes: string[];
+  keywords: string[];
   archiveSize: number;
   thin: boolean;
 };

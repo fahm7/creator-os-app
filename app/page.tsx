@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 
 type Pattern = { claim: string; evidence: string };
-type Profile = { patterns: Pattern[]; themes: string[]; archiveSize: number; thin: boolean };
+type Piece = { source: string; url?: string; text: string };
+type Profile = {
+  niche: string;
+  patterns: Pattern[];
+  themes: string[];
+  keywords: string[];
+  archiveSize: number;
+  thin: boolean;
+};
 type Idea = {
   idea: string;
   mechanism: string;
@@ -42,7 +50,9 @@ const VERDICT_LABEL: Record<string, string> = {
 };
 
 export default function Home() {
+  const [input, setInput] = useState("");
   const [archive, setArchive] = useState("");
+  const [notes, setNotes] = useState<string[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [rejected, setRejected] = useState<Set<number>>(new Set());
   const [topic, setTopic] = useState("");
@@ -98,8 +108,23 @@ export default function Home() {
     ? profile.patterns.filter((_, i) => !rejected.has(i)).map((p) => p.claim)
     : [];
 
+  // Two steps behind one button: assemble the archive (transcribing any reel links), then read a
+  // style from it. Split server-side so the app only ever profiles plain text.
   async function analyze() {
-    const data = await call<Profile>("/api/profile", { archive }, "Reading the archive");
+    const built = await call<{ pieces: Piece[]; notes: string[] }>(
+      "/api/archive",
+      { input },
+      "Collecting your archive"
+    );
+    if (!built) return;
+
+    setNotes(built.notes);
+    const joined = built.pieces
+      .map((p, i) => `--- piece ${i + 1} (${p.source}) ---\n${p.text}`)
+      .join("\n\n");
+    setArchive(joined);
+
+    const data = await call<Profile>("/api/profile", { archive: joined }, "Reading your style");
     if (data) {
       setProfile(data);
       setRejected(new Set());
@@ -177,23 +202,32 @@ export default function Home() {
             Step 1 — Your archive
           </h2>
           <p className="mb-3 text-sm text-neutral-400">
-            Paste your past posts, captions, or transcripts. More is better; under ten pieces is too
-            thin to read a style from.
+            Instagram reel links get transcribed automatically, one per line. LinkedIn and written
+            posts go in as text — they are already words, so there is nothing to transcribe. More is
+            better; under ten pieces is too thin to read a style from.
           </p>
           <textarea
-            value={archive}
-            onChange={(e) => setArchive(e.target.value)}
-            rows={8}
-            placeholder="Paste 20+ of your published pieces here, separated by blank lines..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            rows={10}
+            placeholder={`https://instagram.com/reel/...\nhttps://instagram.com/reel/...\n\nOr paste your written posts, separated by blank lines.`}
             className="w-full rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-sm outline-none focus:border-neutral-600"
           />
           <button
             onClick={analyze}
-            disabled={!!busy || archive.trim().length < 200}
+            disabled={!!busy || input.trim().length < 50}
             className="mt-3 rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
           >
-            {busy === "Reading the archive" ? "Reading..." : "Read my style"}
+            {busy || "Read my style"}
           </button>
+
+          {notes.length > 0 && (
+            <ul className="mt-3 space-y-1 text-xs text-amber-400/90">
+              {notes.map((note, i) => (
+                <li key={i}>{note}</li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {/* Step 2 */}
@@ -211,6 +245,25 @@ export default function Home() {
                 </span>
               )}
             </p>
+
+            {profile.niche && (
+              <div className="mb-4 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">Niche</p>
+                <p className="mt-1 text-sm">{profile.niche}</p>
+                {profile.keywords?.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {profile.keywords.map((k, i) => (
+                      <span
+                        key={i}
+                        className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-xs text-neutral-400"
+                      >
+                        {k}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <ul className="space-y-2">
               {profile.patterns.map((p, i) => (
                 <li
