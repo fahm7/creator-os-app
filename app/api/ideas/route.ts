@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { askClaude, extractJson } from "@/lib/claude";
+import { askModel, extractJson } from "@/lib/model";
 import { ideasPrompt } from "@/lib/prompts";
 
 export const maxDuration = 120;
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const text = await askClaude(
+    const text = await askModel(
       ideasPrompt(archive, patterns, themes ?? [], topic),
       "high"
     );

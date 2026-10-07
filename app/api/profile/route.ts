@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { askClaude, extractJson } from "@/lib/claude";
+import { askModel, extractJson } from "@/lib/model";
 import { profilePrompt } from "@/lib/prompts";
 
 export const maxDuration = 120;
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const text = await askClaude(profilePrompt(archive), "high");
+    const text = await askModel(profilePrompt(archive), "high");
     return NextResponse.json(extractJson<Profile>(text));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
