@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { askModel, extractJson } from "@/lib/model";
 import { ideasPrompt } from "@/lib/prompts";
 
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 type Idea = {
   idea: string;
