@@ -30,15 +30,23 @@ Extract style patterns that are CITABLE, not impressions. "Casual tone" is not a
 For each pattern, cite the specific piece(s) it came from, quoting a short fragment so the creator
 can verify you read it correctly.
 
-Also list the recurring THEMES the archive shows they return to. These are used later to generate
-ideas, so name the underlying subject, not the specific piece.
+Also extract:
+- NICHE: the domain they operate in, one line. Be specific ("NLP and practical mental health for a
+  general audience", not "self-improvement").
+- THEMES: the recurring subjects they return to. Name the underlying subject, not the piece. These
+  drive idea generation later.
+- KEYWORDS: terms and phrases they actually reuse. Include signature phrasings, not just topic
+  words. These matter twice: they are part of the voice, and a reused signature phrase is a
+  different thing from a reused idea.
 
 Return ONLY valid JSON, no prose before or after:
 {
+  "niche": "one line",
   "patterns": [
     { "claim": "the pattern, stated specifically", "evidence": "short quoted fragment or piece reference" }
   ],
   "themes": ["theme 1", "theme 2"],
+  "keywords": ["term or phrase they reuse"],
   "archiveSize": <number of distinct pieces you could identify>,
   "thin": <true if fewer than 10 distinct pieces, else false>
 }`;
