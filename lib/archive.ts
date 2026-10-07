@@ -3,7 +3,11 @@ import { Supadata } from "@supadata/js";
 export type Piece = { source: string; url?: string; text: string };
 export type ArchiveResult = { pieces: Piece[]; notes: string[] };
 
-const INSTAGRAM = /^https?:\/\/(www\.)?instagram\.com\/\S+/i;
+// A single reel or post carries a code after the segment; a profile or its reels tab does not.
+// That distinction matters because only the former has anything to transcribe.
+const INSTAGRAM_MEDIA =
+  /^https?:\/\/(www\.)?instagram\.com\/(?:[^/]+\/)?(reel|reels|p|tv)\/[A-Za-z0-9_-]+/i;
+const INSTAGRAM_ANY = /^https?:\/\/(www\.)?instagram\.com\/\S+/i;
 const YOUTUBE = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/\S+/i;
 const LINKEDIN = /^https?:\/\/(www\.)?linkedin\.com\/\S+/i;
 
@@ -42,7 +46,10 @@ export async function buildArchive(input: string): Promise<ArchiveResult> {
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const instagramUrls = lines.filter((l) => INSTAGRAM.test(l));
+  const instagramUrls = lines.filter((l) => INSTAGRAM_MEDIA.test(l));
+  const instagramProfiles = lines.filter(
+    (l) => INSTAGRAM_ANY.test(l) && !INSTAGRAM_MEDIA.test(l)
+  );
   const youtubeUrls = lines.filter((l) => YOUTUBE.test(l));
   const linkedinUrls = lines.filter((l) => LINKEDIN.test(l));
 
@@ -50,7 +57,7 @@ export async function buildArchive(input: string): Promise<ArchiveResult> {
   // one piece from the next, which is how people naturally paste a batch of posts.
   const freeText = input
     .split("\n")
-    .filter((l) => ![INSTAGRAM, YOUTUBE, LINKEDIN].some((re) => re.test(l.trim())))
+    .filter((l) => ![INSTAGRAM_ANY, YOUTUBE, LINKEDIN].some((re) => re.test(l.trim())))
     .join("\n")
     .split(/\n\s*\n/)
     .map((block) => block.trim())
@@ -60,15 +67,24 @@ export async function buildArchive(input: string): Promise<ArchiveResult> {
   const pieces: Piece[] = freeText.map((text) => ({ source: "pasted", text }));
 
   if (instagramUrls.length) {
-    if (!process.env.SUPADATA_API_KEY) {
+    // The placeholder in .env.local is a string, so a bare presence check would pass it through
+    // and surface an unhelpful Unauthorized from the API instead.
+    const key = process.env.SUPADATA_API_KEY;
+    if (!key || key.startsWith("paste-")) {
       notes.push(
-        `${instagramUrls.length} Instagram link(s) skipped: no SUPADATA_API_KEY configured.`
+        `${instagramUrls.length} Instagram link(s) skipped: SUPADATA_API_KEY is not set in .env.local. Get a free key at supadata.ai, then restart the dev server.`
       );
     } else {
       const result = await transcribeInstagram(instagramUrls);
       pieces.push(...result.pieces);
       notes.push(...result.notes);
     }
+  }
+
+  if (instagramProfiles.length) {
+    notes.push(
+      `That looks like an Instagram profile, not a reel. Instagram has no API for listing someone's posts, so paste individual reel links instead — open a reel, copy its link, one per line. They look like instagram.com/reel/ABC123.`
+    );
   }
 
   if (youtubeUrls.length) {
