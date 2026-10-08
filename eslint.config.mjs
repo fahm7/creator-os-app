@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vercel's build output is minified bundles and launcher shims. Linting it drowned the two
+    // real findings in this codebase under about 1,800 warnings about generated code.
+    ".vercel/**",
   ]),
 ]);
 
