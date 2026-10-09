@@ -67,12 +67,19 @@ export async function POST(request: Request) {
       "Re-reading the archive"
     );
 
-    if (all.length === 0) {
+    // Three is enough to read a style from provisionally; fewer is not. Counted against the
+    // stored archive rather than this paste, so adding a third piece to two already saved works.
+    const MIN_PIECES = 3;
+
+    if (all.length < MIN_PIECES) {
       return NextResponse.json(
         {
           error:
-            result.notes.join(" ") ||
-            "Could not find anything readable. Paste your post text, or reel and video links one per line.",
+            all.length === 0
+              ? result.notes.join(" ") ||
+                "Could not find anything readable. Paste your post text, or reel and video links one per line."
+              : `Your archive holds ${all.length} piece(s). Add at least ${MIN_PIECES} — more is better.` +
+                (result.notes.length ? ` ${result.notes.join(" ")}` : ""),
         },
         { status: 400 }
       );

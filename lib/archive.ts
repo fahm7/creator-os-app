@@ -19,9 +19,24 @@ const YOUTUBE_ANY = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/\S+/i;
 
 const TIKTOK = /^https?:\/\/(www\.)?tiktok\.com\/\S+/i;
 const TWITTER = /^https?:\/\/(www\.)?(twitter\.com|x\.com)\/\S+/i;
-const LINKEDIN = /^https?:\/\/(www\.)?linkedin\.com\/\S+/i;
 
-const ALL_PLATFORMS = [INSTAGRAM_ANY, YOUTUBE_ANY, TIKTOK, TWITTER, LINKEDIN];
+// lnkd.in is LinkedIn's own shortener and is what you get when you copy a link from LinkedIn,
+// so omitting it meant the most common form of LinkedIn link missed this branch entirely and
+// was stored as though the URL itself were the creator's writing.
+// Regional subdomains (in.linkedin.com, uk.linkedin.com) are real and appear in shared links.
+const LINKEDIN_POST =
+  /^https?:\/\/([a-z]{2}\.)?(www\.)?(linkedin\.com\/(posts|feed\/update|pulse)\/|lnkd\.in\/)\S+/i;
+const LINKEDIN_PROFILE =
+  /^https?:\/\/([a-z]{2}\.)?(www\.)?linkedin\.com\/(in|company|school)\/\S+/i;
+const LINKEDIN_ANY = /^https?:\/\/([a-z]{2}\.)?(www\.)?(linkedin\.com|lnkd\.in)\/\S+/i;
+
+const ALL_PLATFORMS = [INSTAGRAM_ANY, YOUTUBE_ANY, TIKTOK, TWITTER, LINKEDIN_ANY];
+
+// A line that is nothing but a URL is never a piece of writing. Without this, any link whose
+// domain this file does not recognise falls through to the free-text branch and gets stored as
+// archive content — which is how an archive of four link lists produced a confident style read
+// about URL formatting.
+const URL_ONLY = /^(\s*https?:\/\/\S+\s*)+$/i;
 
 // A channel can hold hundreds of videos and every transcript is a billed request, so an
 // unbounded expansion could empty a 100-request free tier on one click.
@@ -48,6 +63,25 @@ export function hasSupadataKey() {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Supadata reports a spent quota as the bare string "Limit Exceeded", which reads like a bug in
+// this app rather than an account that needs topping up. The same for an expired key.
+function readableReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "fetch failed");
+
+  if (/limit.?exceeded/i.test(raw)) {
+    // Supadata says only "Limit Exceeded" for both a spent allowance and too many requests at
+    // once, so naming one would be a guess. Both are worth acting on differently.
+    return "Supadata refused this as over its limit — either the free tier's 100 requests are spent, or too many went at once. Check usage at supadata.ai and try again in a minute. Pasting the text always works and costs nothing.";
+  }
+  if (/unauthor|invalid.?key|forbidden/i.test(raw)) {
+    return "Supadata rejected the API key. Check SUPADATA_API_KEY in .env.local, then restart the dev server.";
+  }
+  if (/upgrade.?required/i.test(raw)) {
+    return "This needs a paid Supadata plan.";
+  }
+  return raw;
+}
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -105,13 +139,48 @@ async function transcribeOne(
 
     return { piece: { source, url, text } };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "fetch failed";
+    const reason = readableReason(error);
     return { note: `Could not transcribe ${url}: ${reason}` };
   }
 }
 
-// LinkedIn has no public read API, but a post is already text, so scraping the page to Markdown
-// loses nothing that transcription would have recovered.
+// Markdown links carry tracking query strings that would dominate the archive and teach the
+// style read nothing. The visible text is the part the creator wrote.
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`+/g, "")
+    // A link that followed a full stop with no space ("person.[Alexandr Wang](...)") closes up
+    // into "person.Alexandr" once the syntax goes. Requiring lowercase before the stop keeps
+    // initialisms like U.S intact.
+    .replace(/([a-z])\.([A-Z])/g, "$1. $2")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+// A scraped LinkedIn post page is about 35,000 characters, of which roughly 2,500 are the post.
+// The rest is a cookie banner, a share row, and — past the "More Relevant Posts" heading —
+// other people's posts, which must never enter this creator's archive.
+export function extractLinkedInPost(markdown: string): string {
+  // Everything from here on is furniture and then strangers' writing.
+  const boundary = markdown.search(/To view or add a comment|##\s*More Relevant Posts/i);
+  const head = boundary > 0 ? markdown.slice(0, boundary) : markdown;
+
+  // The body is the longest line by a wide margin: the cookie banner tops out near 380
+  // characters and the share row near 470, against a couple of thousand for real writing.
+  // Taking the longest line also discards the H1, which LinkedIn generates with its own AI
+  // ("This title was summarized by AI from the post below") and which is therefore not the
+  // creator's voice at all.
+  const body = head
+    .split("\n")
+    .map((l) => l.trim())
+    .reduce((best, l) => (l.length > best.length ? l : best), "");
+
+  return stripMarkdown(body);
+}
+
+// LinkedIn has no public read API, but a post is already text, so scraping the page and pulling
+// the post out of it loses nothing that transcription would have recovered.
 async function scrapeOne(
   supadata: ReturnType<typeof client>,
   url: string,
@@ -119,15 +188,18 @@ async function scrapeOne(
 ): Promise<Fetched> {
   try {
     const res = await supadata.web.scrape(url);
-    const text = (res.content ?? "").trim();
-    if (text.length < 40) {
+    const text = extractLinkedInPost(res.content ?? "");
+
+    // A login wall scrapes successfully and returns a few thousand characters of sign-up prose,
+    // so a short result means the post was not actually readable rather than that it was empty.
+    if (text.length < 120) {
       return {
-        note: `Nothing readable at ${url}. LinkedIn hides some posts from anyone not signed in — paste the text instead.`,
+        note: `Could not read the post at ${url}. LinkedIn hides most posts from anyone not signed in — paste the post text instead, which works and loses nothing.`,
       };
     }
     return { piece: { source, url, text } };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "fetch failed";
+    const reason = readableReason(error);
     return { note: `Could not read ${url}: ${reason}` };
   }
 }
@@ -163,7 +235,7 @@ async function expandChannels(
         `${url}: taking the ${found.length} most recent video(s). Capped at ${CHANNEL_VIDEO_CAP} per run because each transcript is a billed request.`
       );
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "lookup failed";
+      const reason = readableReason(error);
       notes.push(`Could not list videos for ${url}: ${reason}`);
     }
   }
@@ -192,7 +264,11 @@ export async function buildArchive(
   );
   const tiktokUrls = lines.filter((l) => TIKTOK.test(l));
   const twitterUrls = lines.filter((l) => TWITTER.test(l));
-  const linkedinUrls = lines.filter((l) => LINKEDIN.test(l));
+  const linkedinPosts = lines.filter((l) => LINKEDIN_POST.test(l));
+  const linkedinProfiles = lines.filter((l) => LINKEDIN_PROFILE.test(l));
+  const linkedinOther = lines.filter(
+    (l) => LINKEDIN_ANY.test(l) && !LINKEDIN_POST.test(l) && !LINKEDIN_PROFILE.test(l)
+  );
 
   // Everything that is not a link is treated as already-written content. Blank lines separate
   // one piece from the next, which is how people naturally paste a batch of posts.
@@ -202,7 +278,11 @@ export async function buildArchive(
     .join("\n")
     .split(/\n\s*\n/)
     .map((block) => block.trim())
-    .filter((block) => block.length > 40);
+    // 15 rather than 40: a real piece can be one short line, and a longer floor silently
+    // discarded them, so the app then complained about input the creator had in fact given.
+    .filter((block) => block.length > 15)
+    // A block of bare URLs is not writing, whatever domain it points at.
+    .filter((block) => !URL_ONLY.test(block));
 
   const notes: string[] = [];
   const pieces: Piece[] = freeText.map((text) => ({ source: "pasted", text }));
@@ -214,7 +294,7 @@ export async function buildArchive(
     youtubeChannels.length ||
     tiktokUrls.length ||
     twitterUrls.length ||
-    linkedinUrls.length;
+    linkedinPosts.length;
 
   if (needsApi && !hasSupadataKey()) {
     notes.push(
@@ -236,7 +316,7 @@ export async function buildArchive(
       ...twitterUrls.map((url) => ({ url, source: "other" })),
     ];
 
-    const scrapable = linkedinUrls.map((url) => ({ url, source: "linkedin" }));
+    const scrapable = linkedinPosts.map((url) => ({ url, source: "linkedin" }));
 
     const alreadyHave = [...transcribable, ...scrapable].filter((t) => skipUrls.has(t.url));
     if (alreadyHave.length) {
@@ -263,6 +343,18 @@ export async function buildArchive(
   if (instagramProfiles.length) {
     notes.push(
       `That looks like an Instagram profile, not a reel. Instagram has no API for listing someone's posts, so paste individual reel links instead — open a reel, copy its link, one per line. They look like instagram.com/reel/ABC123.`
+    );
+  }
+
+  if (linkedinProfiles.length) {
+    notes.push(
+      `That looks like a LinkedIn profile, not a post. LinkedIn serves a sign-up wall for profiles to anyone not logged in, so there is nothing there to read. Open an individual post, copy its link, one per line — or paste the post text, which always works.`
+    );
+  }
+
+  if (linkedinOther.length) {
+    notes.push(
+      `${linkedinOther.length} LinkedIn link(s) were not a post and were skipped. Use a post link (linkedin.com/posts/..., /pulse/..., or an lnkd.in short link).`
     );
   }
 
