@@ -8,6 +8,7 @@ export const maxDuration = 60;
 
 type Profile = {
   niche: string;
+  nicheOptions: { label: string; rationale: string }[];
   patterns: { claim: string; evidence: string }[];
   themes: string[];
   keywords: string[];
@@ -25,14 +26,26 @@ export async function POST(request: Request) {
     if (!creatorId) {
       return NextResponse.json({ error: "No creator selected." }, { status: 400 });
     }
-    if (!archive || archive.trim().length < 200) {
+    // Count the piece markers the client assembles rather than characters: three one-line
+    // pieces are a legitimate start, and one long piece is not three.
+    const pieceCount = (archive?.match(/^--- piece \d+ /gm) ?? []).length;
+
+    if (!archive?.trim()) {
+      return NextResponse.json({ error: "Nothing to read." }, { status: 400 });
+    }
+    if (pieceCount > 0 && pieceCount < 3) {
       return NextResponse.json(
-        { error: "Paste more of the archive. A few hundred characters is not enough to read a style from." },
+        { error: `Only ${pieceCount} piece(s) to read from. Add at least 3 — more is better.` },
         { status: 400 }
       );
     }
 
-    const text = await askModel(profilePrompt(archive), "high");
+    // Medium, not high. Reading a style is extraction — the claims are there in the archive or
+    // they are not — while the archive gate in /api/ideas is the judgment call that earns the
+    // higher setting. High effort here spent roughly three times the reasoning tokens and, now
+    // that the prompt also asks for 5-7 niche options, left too little room under Groq's cap:
+    // the answer came back truncated about one run in three.
+    const text = await askModel(profilePrompt(archive), "medium");
     const parsed = extractJson<Profile>(text);
 
     const supabase = db();
@@ -72,8 +85,42 @@ export async function POST(request: Request) {
         )
       : [];
 
+    // Keywords arrive ticked and niches unticked: the creator prunes the first and decides the
+    // second, and either can be left alone — nothing downstream is gated on a selection.
+    const choiceRows = [
+      ...(parsed.keywords ?? []).map((label, i) => ({
+        style_read_id: styleRead.id,
+        kind: "keyword" as const,
+        ordinal: i,
+        label,
+        rationale: null,
+        selected: true,
+      })),
+      ...(parsed.nicheOptions ?? []).map((o, i) => ({
+        style_read_id: styleRead.id,
+        kind: "niche" as const,
+        ordinal: i,
+        label: o.label,
+        rationale: o.rationale ?? null,
+        selected: false,
+      })),
+    ].filter((r) => r.label?.trim());
+
+    const choices = choiceRows.length
+      ? orThrow(
+          await supabase
+            .from("style_choices")
+            .insert(choiceRows)
+            .select()
+            .order("kind", { ascending: true })
+            .order("ordinal", { ascending: true }),
+          "Storing the keyword and niche options"
+        )
+      : [];
+
     return NextResponse.json({
       styleReadId: styleRead.id,
+      choices,
       niche: styleRead.niche,
       themes: styleRead.themes,
       keywords: styleRead.keywords,

@@ -328,6 +328,47 @@ export type Database = {
           },
         ]
       }
+      style_choices: {
+        Row: {
+          created_at: string
+          id: string
+          kind: Database["public"]["Enums"]["choice_kind"]
+          label: string
+          ordinal: number
+          rationale: string | null
+          selected: boolean
+          style_read_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: Database["public"]["Enums"]["choice_kind"]
+          label: string
+          ordinal: number
+          rationale?: string | null
+          selected?: boolean
+          style_read_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["choice_kind"]
+          label?: string
+          ordinal?: number
+          rationale?: string | null
+          selected?: boolean
+          style_read_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "style_choices_style_read_id_fkey"
+            columns: ["style_read_id"]
+            isOneToOne: false
+            referencedRelation: "style_reads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       style_patterns: {
         Row: {
           claim: string
@@ -425,6 +466,7 @@ export type Database = {
     }
     Enums: {
       archive_verdict: "new" | "reframe" | "repeat"
+      choice_kind: "keyword" | "niche"
       idea_mechanism: "kipling" | "reframe" | "vertical"
       idea_status: "banked" | "shortlisted" | "shot" | "discarded"
       pattern_status: "pending" | "confirmed" | "rejected"
@@ -557,6 +599,7 @@ export const Constants = {
   public: {
     Enums: {
       archive_verdict: ["new", "reframe", "repeat"],
+      choice_kind: ["keyword", "niche"],
       idea_mechanism: ["kipling", "reframe", "vertical"],
       idea_status: ["banked", "shortlisted", "shot", "discarded"],
       pattern_status: ["pending", "confirmed", "rejected"],

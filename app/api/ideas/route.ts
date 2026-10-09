@@ -23,7 +23,8 @@ const VERDICTS = ["new", "reframe", "repeat"] as const;
 // into the bank, which is the whole premise: ideas accumulate through the week.
 export async function POST(request: Request) {
   try {
-    const { creatorId, styleReadId, archive, patterns, themes, topic } = await request.json();
+    const { creatorId, styleReadId, archive, patterns, themes, niche, keywords, topic } =
+      await request.json();
 
     if (!creatorId) {
       return NextResponse.json({ error: "No creator selected." }, { status: 400 });
@@ -35,7 +36,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const text = await askModel(ideasPrompt(archive, patterns, themes ?? [], topic), "high");
+    // niche and keywords arrive already resolved by the client: the creator's ticks if they made
+    // any, otherwise what the model read. An empty selection is not an error.
+    const text = await askModel(
+      ideasPrompt({
+        archive,
+        patterns,
+        themes: themes ?? [],
+        niche: niche?.trim() || "not specified — infer it from the themes and the archive",
+        keywords: keywords ?? [],
+        topic,
+      }),
+      "high"
+    );
     const parsed = extractJson<{ ideas: Idea[] }>(text);
 
     if (!parsed.ideas?.length) {
