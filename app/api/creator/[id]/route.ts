@@ -100,3 +100,64 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// Clearing a creator's work. Two scopes rather than one, because they answer different
+// problems: an archive that holds the wrong material is not the same as wanting to start over,
+// and the run log is the evidence the hypothesis is measured on — too valuable to destroy as a
+// side effect of re-pasting an archive.
+//
+// The creator row itself survives either way, so clearing does not sign anyone out.
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const scope = new URL(request.url).searchParams.get("scope");
+
+    if (scope !== "archive" && scope !== "everything") {
+      return NextResponse.json(
+        { error: "Say what to clear: scope=archive or scope=everything." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = db();
+
+    const creators = orThrow(
+      await supabase.from("creators").select("id").eq("id", id).limit(1),
+      "Finding the creator"
+    );
+    if (!creators.length) {
+      return NextResponse.json({ error: "No such creator." }, { status: 404 });
+    }
+
+    const pieces = orThrow(
+      await supabase.from("archive_pieces").delete().eq("creator_id", id).select("id"),
+      "Clearing the archive"
+    );
+
+    if (scope === "archive") {
+      return NextResponse.json({ cleared: { pieces: pieces.length } });
+    }
+
+    // Deleting the ideas takes their outlines and reactions with them, and deleting the style
+    // reads takes the patterns and the keyword and niche choices — all by foreign key cascade,
+    // so this is three statements rather than seven.
+    const ideas = orThrow(
+      await supabase.from("ideas").delete().eq("creator_id", id).select("id"),
+      "Clearing the idea bank"
+    );
+    const styleReads = orThrow(
+      await supabase.from("style_reads").delete().eq("creator_id", id).select("id"),
+      "Clearing the style reads"
+    );
+
+    return NextResponse.json({
+      cleared: { pieces: pieces.length, ideas: ideas.length, styleReads: styleReads.length },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
