@@ -45,3 +45,8 @@ next-env.d.ts
 
 # claude code local settings
 .claude/settings.local.json
+
+# interview notes — real names, professions and profile links of people who
+# answered questions. The reasoning drawn from them is in data/case_study.md,
+# which is committed; the raw responses stay on this machine.
+data/*.csv
