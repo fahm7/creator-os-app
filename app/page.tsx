@@ -77,6 +77,11 @@ const VERDICT_LABEL: Record<string, string> = {
 
 const CREATOR_KEY = "creator-os-creator";
 
+// Mirrors the URL_ONLY guard in lib/archive.ts. New pieces like this are no longer stored, but
+// archives built before that fix still hold them, and a row of bare links teaches a style read
+// nothing — so it is marked rather than left looking like writing.
+const URL_ONLY = /^(\s*https?:\/\/\S+\s*)+$/i;
+
 export default function Home() {
   const [creator, setCreator] = useState<Creator | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -182,6 +187,45 @@ export default function Home() {
       // Non-fatal; this session still works.
     }
     await hydrate(data.creator.id);
+  }
+
+  // Two scopes, each confirmed separately. Clearing an archive that holds the wrong material is
+  // a different intention from starting over, and the run log is the evidence this project is
+  // measured on — it should never go as a side effect of re-pasting an archive.
+  async function clearData(scope: "archive" | "everything") {
+    if (!creator) return;
+
+    const warning =
+      scope === "archive"
+        ? `Delete all ${pieces.length} archive piece(s) for ${creator.name}? Your style reads, idea bank and run log are kept.`
+        : `Delete everything for ${creator.name} — archive, style reads, keyword and niche choices, ideas, outlines and the run log? This cannot be undone.`;
+
+    if (!window.confirm(warning)) return;
+
+    const data = await call<{ cleared: Record<string, number> }>(
+      `/api/creator/${creator.id}?scope=${scope}`,
+      undefined,
+      scope === "archive" ? "Clearing the archive" : "Clearing everything",
+      "DELETE"
+    );
+    if (!data) return;
+
+    setPieces([]);
+    setNotes([
+      `Cleared ${Object.entries(data.cleared)
+        .map(([k, v]) => `${v} ${k.replace(/([A-Z])/g, " $1").toLowerCase()}`)
+        .join(", ")}.`,
+    ]);
+
+    if (scope === "everything") {
+      setStyleRead(null);
+      setPatterns([]);
+      setChoices([]);
+      setIdeas([]);
+      setChosen(null);
+      setOutline(null);
+      setLog([]);
+    }
   }
 
   function signOut() {
@@ -423,8 +467,22 @@ export default function Home() {
             {creator && (
               <div className="text-right text-xs">
                 <p className="text-neutral-300">{creator.name}</p>
-                <button onClick={signOut} className="mt-1 text-neutral-500 underline">
+                <button onClick={signOut} className="mt-1 block w-full text-right text-neutral-500 underline">
                   switch creator
+                </button>
+                <button
+                  onClick={() => clearData("archive")}
+                  disabled={!!busy || pieces.length === 0}
+                  className="mt-0.5 block w-full text-right text-neutral-500 underline disabled:opacity-40"
+                >
+                  clear archive
+                </button>
+                <button
+                  onClick={() => clearData("everything")}
+                  disabled={!!busy}
+                  className="mt-0.5 block w-full text-right text-rose-400/70 underline disabled:opacity-40"
+                >
+                  clear everything
                 </button>
               </div>
             )}
@@ -511,6 +569,60 @@ export default function Home() {
                     <li key={i}>{note}</li>
                   ))}
                 </ul>
+              )}
+
+              {/* What is actually stored, with the links visible. The character count and the
+                  source are what tell you at a glance whether a piece is writing or a list of
+                  URLs left over from before those were rejected. */}
+              {pieces.length > 0 && (
+                <div className="mt-4 border-t border-neutral-800 pt-4">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-neutral-500">
+                    Your archive — {pieces.length} piece{pieces.length === 1 ? "" : "s"}
+                  </p>
+                  <ul className="space-y-1">
+                    {pieces.map((p, i) => {
+                      const linksOnly = URL_ONLY.test(p.text.trim());
+                      return (
+                        <li
+                          key={i}
+                          className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-xs"
+                        >
+                          <span className="w-16 shrink-0 text-neutral-500">{p.source}</span>
+                          <span className="min-w-0 flex-1 break-all">
+                            {p.url ? (
+                              <a
+                                href={p.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-neutral-300 underline decoration-neutral-700"
+                              >
+                                {p.url}
+                              </a>
+                            ) : linksOnly ? (
+                              <span className="text-neutral-500">{p.text.split(/\s+/)[0]}</span>
+                            ) : (
+                              <span className="text-neutral-400">
+                                {p.text.slice(0, 70).replace(/\s+/g, " ")}
+                                {p.text.length > 70 ? "…" : ""}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-neutral-500">
+                            {p.text.length.toLocaleString()} chars
+                          </span>
+                          {linksOnly && (
+                            <span
+                              className="shrink-0 text-amber-400"
+                              title="This piece is only links, so it teaches the style read nothing. Paste the post text, or add the link on its own line so it gets read."
+                            >
+                              ⚠ links only
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </section>
 
