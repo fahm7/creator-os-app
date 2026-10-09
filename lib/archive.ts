@@ -47,6 +47,11 @@ const CHANNEL_VIDEO_CAP = 10;
 const JOB_BUDGET_MS = 35_000;
 const JOB_POLL_MS = 2_000;
 
+// Supadata's free tier serves about one request at a time, so links are fetched sequentially
+// with a breath between them, and a refusal gets one wait-and-retry before being believed.
+const BETWEEN_FETCHES_MS = 1_200;
+const RATE_LIMIT_WAIT_MS = 4_000;
+
 function client() {
   return new Supadata({
     apiKey: process.env.SUPADATA_API_KEY ?? "",
@@ -66,6 +71,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Supadata reports a spent quota as the bare string "Limit Exceeded", which reads like a bug in
 // this app rather than an account that needs topping up. The same for an expired key.
+function isRateLimited(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return /limit.?exceeded/i.test(raw);
+}
+
 function readableReason(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error ?? "fetch failed");
 
@@ -94,7 +104,7 @@ function textOf(content: unknown): string {
   return "";
 }
 
-type Fetched = { piece?: Piece; note?: string };
+type Fetched = { piece?: Piece; note?: string; rateLimited?: boolean };
 
 // A video too large to transcribe inline returns a job id instead of content. The previous
 // version tested for "content" and fell back to an empty string, so every long video was
@@ -140,7 +150,7 @@ async function transcribeOne(
     return { piece: { source, url, text } };
   } catch (error) {
     const reason = readableReason(error);
-    return { note: `Could not transcribe ${url}: ${reason}` };
+    return { note: `Could not transcribe ${url}: ${reason}`, rateLimited: isRateLimited(error) };
   }
 }
 
@@ -200,7 +210,7 @@ async function scrapeOne(
     return { piece: { source, url, text } };
   } catch (error) {
     const reason = readableReason(error);
-    return { note: `Could not read ${url}: ${reason}` };
+    return { note: `Could not read ${url}: ${reason}`, rateLimited: isRateLimited(error) };
   }
 }
 
@@ -272,11 +282,20 @@ export async function buildArchive(
 
   // Everything that is not a link is treated as already-written content. Blank lines separate
   // one piece from the next, which is how people naturally paste a batch of posts.
-  const freeText = input
+  const prose = input
     .split("\n")
     .filter((l) => !ALL_PLATFORMS.some((re) => re.test(l.trim())))
-    .join("\n")
-    .split(/\n\s*\n/)
+    .join("\n");
+
+  // A blank line ends a piece, which is how people naturally paste a batch of posts — but it
+  // also splits a single post that has paragraphs in it. A line of five or more spaces is an
+  // explicit separator: when one is present it becomes the only separator, so paragraphs inside
+  // a piece survive. Absent, nothing changes for anyone who has pasted before.
+  const explicit = /\n[ \t]{5,}\r?\n/;
+  const separator = explicit.test(prose) ? /\n[ \t]{5,}\r?\n/ : /\n\s*\n/;
+
+  const freeText = prose
+    .split(separator)
     .map((block) => block.trim())
     // 15 rather than 40: a real piece can be one short line, and a longer floor silently
     // discarded them, so the app then complained about input the creator had in fact given.
@@ -329,14 +348,39 @@ export async function buildArchive(
     const toScrape = scrapable.filter((t) => !skipUrls.has(t.url));
     spent += toTranscribe.length + toScrape.length;
 
-    const results = await Promise.all([
-      ...toTranscribe.map((t) => transcribeOne(supadata, t.url, t.source)),
-      ...toScrape.map((t) => scrapeOne(supadata, t.url, t.source)),
-    ]);
+    // One at a time, not Promise.all. Supadata's free tier serves roughly one request at a
+    // time: three links pasted together had two refused as "Limit Exceeded" while one
+    // succeeded, which reads like a spent allowance and was entirely self-inflicted. The same
+    // links fetched one after another all succeed. A few seconds per link is the cost, and the
+    // stored-piece cache means a re-run pays nothing.
+    const jobs = [
+      ...toTranscribe.map((t) => ({ ...t, run: () => transcribeOne(supadata, t.url, t.source) })),
+      ...toScrape.map((t) => ({ ...t, run: () => scrapeOne(supadata, t.url, t.source) })),
+    ];
 
-    for (const r of results) {
-      if (r.piece) pieces.push(r.piece);
-      if (r.note) notes.push(r.note);
+    let refusedAfterRetry = 0;
+
+    for (const [i, job] of jobs.entries()) {
+      // A small gap between calls, skipped before the first one.
+      if (i > 0) await sleep(BETWEEN_FETCHES_MS);
+
+      let result = await job.run();
+
+      // Only a rate limit is worth retrying; a missing page or a bad key will fail again.
+      if (result.rateLimited) {
+        await sleep(RATE_LIMIT_WAIT_MS);
+        result = await job.run();
+        if (result.rateLimited) refusedAfterRetry += 1;
+      }
+
+      if (result.piece) pieces.push(result.piece);
+      if (result.note) notes.push(result.note);
+    }
+
+    if (refusedAfterRetry) {
+      notes.push(
+        `${refusedAfterRetry} link(s) were still refused after waiting. Requests are already sent one at a time, so this is the allowance rather than the pace — check your usage at supadata.ai, or paste the text for those.`
+      );
     }
   }
 
