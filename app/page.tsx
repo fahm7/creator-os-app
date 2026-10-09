@@ -94,6 +94,7 @@ export default function Home() {
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
   const [choices, setChoices] = useState<ChoiceRow[]>([]);
   const [newKeyword, setNewKeyword] = useState("");
+  const [screenCleared, setScreenCleared] = useState(false);
   const [topic, setTopic] = useState("");
   const [format, setFormat] = useState(FORMATS[0]);
   const [ideas, setIdeas] = useState<IdeaRow[]>([]);
@@ -192,40 +193,55 @@ export default function Home() {
   // Two scopes, each confirmed separately. Clearing an archive that holds the wrong material is
   // a different intention from starting over, and the run log is the evidence this project is
   // measured on — it should never go as a side effect of re-pasting an archive.
-  async function clearData(scope: "archive" | "everything") {
+  // Clears the view, not the data. The pieces stay in state so generation still has an archive
+  // to work from, and they stay in Postgres untouched — a reload brings the list straight back.
+  // Named for what it does: a button called "clear archive" that leaves the archive in place is
+  // the same mismatch between label and effect, pointed the other way.
+  function clearScreen() {
+    setScreenCleared(true);
+    setInput("");
+    setNotes([]);
+    setChosen(null);
+    setOutline(null);
+  }
+
+  // The only control that destroys the run log, which is the record of what the creator actually
+  // accepted and cannot be regenerated — unlike pieces, style reads and ideas, which can. Typing
+  // the name costs three seconds on an action used twice, and a plain OK already proved too
+  // easy to hit by accident.
+  async function clearEverything() {
     if (!creator) return;
 
-    const warning =
-      scope === "archive"
-        ? `Delete all ${pieces.length} archive piece(s) for ${creator.name}? Your style reads, idea bank and run log are kept.`
-        : `Delete everything for ${creator.name} — archive, style reads, keyword and niche choices, ideas, outlines and the run log? This cannot be undone.`;
-
-    if (!window.confirm(warning)) return;
+    const typed = window.prompt(
+      `This deletes everything for ${creator.name}: the archive, the style reads, the keyword and niche choices, the ideas, the outlines, and the run log.\n\nThe run log cannot be regenerated. Type the creator name to confirm:`
+    );
+    if (typed?.trim() !== creator.name) {
+      if (typed !== null) setError("Name did not match. Nothing was deleted.");
+      return;
+    }
 
     const data = await call<{ cleared: Record<string, number> }>(
-      `/api/creator/${creator.id}?scope=${scope}`,
+      `/api/creator/${creator.id}?scope=everything`,
       undefined,
-      scope === "archive" ? "Clearing the archive" : "Clearing everything",
+      "Clearing everything",
       "DELETE"
     );
     if (!data) return;
 
     setPieces([]);
+    setStyleRead(null);
+    setPatterns([]);
+    setChoices([]);
+    setIdeas([]);
+    setChosen(null);
+    setOutline(null);
+    setLog([]);
+    setScreenCleared(false);
     setNotes([
-      `Cleared ${Object.entries(data.cleared)
+      `Deleted ${Object.entries(data.cleared)
         .map(([k, v]) => `${v} ${k.replace(/([A-Z])/g, " $1").toLowerCase()}`)
         .join(", ")}.`,
     ]);
-
-    if (scope === "everything") {
-      setStyleRead(null);
-      setPatterns([]);
-      setChoices([]);
-      setIdeas([]);
-      setChosen(null);
-      setOutline(null);
-      setLog([]);
-    }
   }
 
   function signOut() {
@@ -292,6 +308,7 @@ export default function Home() {
     );
     if (!built) return;
 
+    setScreenCleared(false);
     setNotes(built.notes);
     setPieces(built.pieces);
     setInput("");
@@ -471,16 +488,21 @@ export default function Home() {
                   switch creator
                 </button>
                 <button
-                  onClick={() => clearData("archive")}
-                  disabled={!!busy || pieces.length === 0}
+                  onClick={clearScreen}
+                  disabled={!!busy || screenCleared}
                   className="mt-0.5 block w-full text-right text-neutral-500 underline disabled:opacity-40"
                 >
-                  clear archive
+                  clear screen
                 </button>
+                <span className="block text-right text-[10px] text-neutral-600">
+                  nothing is deleted
+                </span>
+                {/* Deliberate distance. These two sat one line apart and the destructive one
+                    got clicked by mistake, which cost a run log. */}
                 <button
-                  onClick={() => clearData("everything")}
+                  onClick={clearEverything}
                   disabled={!!busy}
-                  className="mt-0.5 block w-full text-right text-rose-400/70 underline disabled:opacity-40"
+                  className="mt-6 block w-full text-right text-rose-400/60 underline disabled:opacity-40"
                 >
                   clear everything
                 </button>
@@ -574,7 +596,17 @@ export default function Home() {
               {/* What is actually stored, with the links visible. The character count and the
                   source are what tell you at a glance whether a piece is writing or a list of
                   URLs left over from before those were rejected. */}
-              {pieces.length > 0 && (
+              {/* A blank screen must not look like lost data, especially right after someone
+                  has lost some. Say where the archive went and how to see it again. */}
+              {screenCleared && pieces.length > 0 && (
+                <p className="mt-4 border-t border-neutral-800 pt-4 text-xs text-neutral-500">
+                  Screen cleared. Your {pieces.length} stored piece{pieces.length === 1 ? "" : "s"}{" "}
+                  {pieces.length === 1 ? "is" : "are"} still in the database and still used for
+                  ideas — reload the page to see the list again.
+                </p>
+              )}
+
+              {pieces.length > 0 && !screenCleared && (
                 <div className="mt-4 border-t border-neutral-800 pt-4">
                   <p className="mb-2 text-xs uppercase tracking-wide text-neutral-500">
                     Your archive — {pieces.length} piece{pieces.length === 1 ? "" : "s"}
