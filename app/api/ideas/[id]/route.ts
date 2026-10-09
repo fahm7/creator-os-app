@@ -2,19 +2,16 @@ import { NextResponse } from "next/server";
 import { db, orThrow } from "@/lib/db";
 import type { TablesUpdate } from "@/lib/database.types";
 
-// Assigning a banked idea to a shoot slot, and recording whether the creator would actually
-// shoot it. Both are measurements rather than preferences: slot assignment produces the
-// prepared-slot rate, and would_shoot is the second falsification condition.
+// Recording whether the creator would actually shoot a banked idea. A measurement rather than a
+// preference: "fewer than half the banked ideas ever get marked yes" is a falsification
+// condition, which is why the column is nullable — unanswered is not the same as no.
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const { shootId, wouldShoot, status } = await request.json();
+    const { wouldShoot, status } = await request.json();
 
     const patch: TablesUpdate<"ideas"> = {};
 
-    // shootId is allowed to be explicitly null, which unassigns, so presence is checked rather
-    // than truthiness.
-    if (shootId !== undefined) patch.shoot_id = shootId;
     if (wouldShoot !== undefined) patch.would_shoot = wouldShoot;
     if (status !== undefined) {
       if (!["banked", "shortlisted", "shot", "discarded"].includes(status)) {

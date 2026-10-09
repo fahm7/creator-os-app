@@ -36,17 +36,30 @@ Also extract:
 - THEMES: the recurring subjects they return to. Name the underlying subject, not the piece. These
   drive idea generation later.
 - KEYWORDS: terms and phrases they actually reuse. Include signature phrasings, not just topic
-  words. These matter twice: they are part of the voice, and a reused signature phrase is a
-  different thing from a reused idea.
+  words. Give AT LEAST 3 even from a small archive — if the archive is thin, widen to the words
+  that carry their meaning rather than returning one. These matter twice: they are part of the
+  voice, and a reused signature phrase is a different thing from a reused idea.
+  Every keyword must carry meaning on its own — a subject the creator talks about ("anxiety",
+  "self-worth") or an image they reach for ("smoke alarm", "soil not trophy"). Never return bare
+  function words or sentence connectives ("is a", "not a", "never a"); a template they reuse is a
+  style pattern, which belongs in patterns, not a keyword. If you would not recognise the creator
+  from the word, it is not a keyword.
+- NICHE OPTIONS: 5 to 7 candidate niches the creator picks from, ordered narrow to broad. Each
+  must be a genuinely different reading of what they do, not seven rewordings of one — vary the
+  audience, the subject and the angle. Name the keywords or themes that produced each one, so
+  the creator can see why it was offered.
 
 Return ONLY valid JSON, no prose before or after:
 {
-  "niche": "one line",
+  "niche": "one line — your single best guess, used when the creator picks nothing",
+  "nicheOptions": [
+    { "label": "the candidate niche, one line", "rationale": "the keywords or themes behind it" }
+  ],
   "patterns": [
     { "claim": "the pattern, stated specifically", "evidence": "short quoted fragment or piece reference" }
   ],
   "themes": ["theme 1", "theme 2"],
-  "keywords": ["term or phrase they reuse"],
+  "keywords": ["term or phrase they reuse — at least 3"],
   "archiveSize": <number of distinct pieces you could identify>,
   "thin": <true if fewer than 10 distinct pieces, else false>
 }`;
@@ -54,7 +67,18 @@ Return ONLY valid JSON, no prose before or after:
 
 // Generates candidate ideas from the creator's own themes and gates each one against the archive,
 // because the whole premise is that an idea they have already covered is worse than no idea.
-export function ideasPrompt(archive: string, patterns: string[], themes: string[], topic?: string) {
+// An options object rather than six positional arguments: four of them are strings or string
+// arrays, so a transposed pair would type-check and silently produce the wrong prompt.
+export function ideasPrompt(opts: {
+  archive: string;
+  patterns: string[];
+  themes: string[];
+  niche: string;
+  keywords: string[];
+  topic?: string;
+}) {
+  const { archive, patterns, themes, niche, keywords, topic } = opts;
+
   const ask = topic
     ? `The creator has brought their own topic: "${topic}". Build candidate angles on THAT topic.`
     : `The creator has arrived with nothing. Generate candidates from their own themes below.`;
@@ -66,6 +90,12 @@ ${ask}
 
 THEIR CONFIRMED STYLE PATTERNS (the creator has verified these, treat as ground truth):
 ${patterns.map((p) => `- ${p}`).join("\n")}
+
+THEIR NICHE (the creator confirmed this, or accepted the read):
+${niche}
+
+THE KEYWORDS THEY KEPT (their words, use them; a dropped keyword was not theirs):
+${keywords.map((k) => `- ${k}`).join("\n")}
 
 THEIR RECURRING THEMES:
 ${themes.map((t) => `- ${t}`).join("\n")}

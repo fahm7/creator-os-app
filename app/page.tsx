@@ -11,6 +11,14 @@ type PatternRow = {
   evidence: string | null;
   status: "pending" | "confirmed" | "rejected";
 };
+type ChoiceRow = {
+  id: string;
+  kind: "keyword" | "niche";
+  ordinal: number;
+  label: string;
+  rationale: string | null;
+  selected: boolean;
+};
 type StyleRead = {
   id: string;
   niche: string | null;
@@ -30,7 +38,6 @@ type IdeaRow = {
   verify_what: string | null;
   status: "banked" | "shortlisted" | "shot" | "discarded";
   would_shoot: boolean | null;
-  shoot_id: string | null;
   created_at: string;
 };
 type Outline = {
@@ -48,13 +55,6 @@ type ReactionRow = {
   note: string | null;
   created_at: string;
   ideas: { idea: string; verdict: string } | null;
-};
-type ShootRow = {
-  id: string;
-  scheduled_on: string;
-  slots_total: number;
-  cancelled: boolean;
-  ideas: { id: string }[];
 };
 
 const FORMATS = [
@@ -87,15 +87,14 @@ export default function Home() {
   const [notes, setNotes] = useState<string[]>([]);
   const [styleRead, setStyleRead] = useState<StyleRead | null>(null);
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
+  const [choices, setChoices] = useState<ChoiceRow[]>([]);
+  const [newKeyword, setNewKeyword] = useState("");
   const [topic, setTopic] = useState("");
   const [format, setFormat] = useState(FORMATS[0]);
   const [ideas, setIdeas] = useState<IdeaRow[]>([]);
   const [chosen, setChosen] = useState<IdeaRow | null>(null);
   const [outline, setOutline] = useState<Outline | null>(null);
   const [log, setLog] = useState<ReactionRow[]>([]);
-  const [shoots, setShoots] = useState<ShootRow[]>([]);
-  const [shootDate, setShootDate] = useState("");
-  const [shootSlots, setShootSlots] = useState("8");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -124,7 +123,7 @@ export default function Home() {
   );
 
   // Pulls everything back from Postgres: the archive, the latest style read and its decisions,
-  // the idea bank, the run log and the shoots. This is what the database bought — the bank
+  // the idea bank and the run log. This is what the database bought — the bank
   // accumulates across sessions instead of dying with the tab.
   const hydrate = useCallback(async (id: string) => {
     try {
@@ -142,9 +141,9 @@ export default function Home() {
       );
       setStyleRead(data.styleRead);
       setPatterns(data.patterns ?? []);
+      setChoices(data.choices ?? []);
       setIdeas(data.ideas ?? []);
       setLog(data.reactions ?? []);
-      setShoots(data.shoots ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load your work");
       // A failed hydrate must not strand the app on a creator it cannot read.
@@ -195,11 +194,11 @@ export default function Home() {
     setPieces([]);
     setStyleRead(null);
     setPatterns([]);
+    setChoices([]);
     setIdeas([]);
     setChosen(null);
     setOutline(null);
     setLog([]);
-    setShoots([]);
     setNotes([]);
     setNameInput("");
   }
@@ -218,6 +217,24 @@ export default function Home() {
     () => patterns.filter((p) => p.status !== "rejected").map((p) => p.claim),
     [patterns]
   );
+
+  const keywordChoices = useMemo(
+    () => choices.filter((c) => c.kind === "keyword"),
+    [choices]
+  );
+  const nicheChoices = useMemo(() => choices.filter((c) => c.kind === "niche"), [choices]);
+
+  const keptKeywords = useMemo(
+    () => keywordChoices.filter((c) => c.selected).map((c) => c.label),
+    [keywordChoices]
+  );
+
+  // An empty niche selection means "use what you read", so the fallback lives here rather than
+  // being a gate on the button: the creator can correct the read without having to ratify it.
+  const chosenNiche = useMemo(() => {
+    const picked = nicheChoices.filter((c) => c.selected).map((c) => c.label);
+    return picked.length ? picked.join("; ") : styleRead?.niche ?? "";
+  }, [nicheChoices, styleRead]);
 
   // Two steps behind one button: assemble the archive (transcribing any links), then read a
   // style from it. Split server-side so the app only ever profiles plain text.
@@ -247,6 +264,7 @@ export default function Home() {
       archiveSize: number | null;
       thin: boolean;
       patterns: PatternRow[];
+      choices: ChoiceRow[];
     }>("/api/profile", { creatorId: creator.id, archive: joined }, "Reading your style");
 
     if (data) {
@@ -259,6 +277,7 @@ export default function Home() {
         thin: data.thin,
       });
       setPatterns(data.patterns);
+      setChoices(data.choices ?? []);
       setChosen(null);
       setOutline(null);
     }
@@ -278,6 +297,39 @@ export default function Home() {
     }
   }
 
+  // Optional on both groups: untick a keyword that is not yours, tick a niche if the read was
+  // off. Written before the UI changes, so a reload shows the decision rather than the default.
+  async function toggleChoice(choice: ChoiceRow) {
+    const data = await call<{ choice: ChoiceRow }>(
+      "/api/choices",
+      { id: choice.id, selected: !choice.selected },
+      "Saving your choice",
+      "PATCH"
+    );
+    if (data) setChoices((prev) => prev.map((c) => (c.id === choice.id ? data.choice : c)));
+  }
+
+  // A keyword the creator types is theirs by definition, so it comes back selected. The route
+  // folds a case-insensitive duplicate into the existing row rather than adding a second.
+  async function addKeyword() {
+    const label = newKeyword.trim();
+    if (!label || !styleRead) return;
+
+    const data = await call<{ choice: ChoiceRow; alreadyThere: boolean }>(
+      "/api/choices",
+      { styleReadId: styleRead.id, label },
+      "Adding your keyword"
+    );
+    if (!data) return;
+
+    setChoices((prev) =>
+      data.alreadyThere
+        ? prev.map((c) => (c.id === data.choice.id ? data.choice : c))
+        : [...prev, data.choice]
+    );
+    setNewKeyword("");
+  }
+
   async function generate() {
     if (!creator) return;
     const data = await call<{ ideas: IdeaRow[] }>(
@@ -288,6 +340,8 @@ export default function Home() {
         archive,
         patterns: keptPatterns,
         themes: styleRead?.themes,
+        niche: chosenNiche,
+        keywords: keptKeywords,
         topic: topic.trim() || undefined,
       },
       "Generating and gating ideas"
@@ -336,19 +390,6 @@ export default function Home() {
     }
   }
 
-  async function addShoot() {
-    if (!creator || !shootDate) return;
-    const data = await call<{ shoot: ShootRow }>(
-      "/api/shoots",
-      { creatorId: creator.id, scheduledOn: shootDate, slotsTotal: Number(shootSlots) },
-      "Adding the shoot"
-    );
-    if (data) {
-      setShoots((prev) => [data.shoot, ...prev]);
-      setShootDate("");
-    }
-  }
-
   function exportLog() {
     const blob = new Blob([JSON.stringify(log, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -358,16 +399,6 @@ export default function Home() {
     a.click();
     URL.revokeObjectURL(url);
   }
-
-  // Prepared-slot rate across the three most recent shoots, which is the form the hypothesis is
-  // stated in: a single shoot says nothing, three consecutive ones are the claim.
-  const recentRate = useMemo(() => {
-    const recent = shoots.filter((s) => !s.cancelled).slice(0, 3);
-    if (!recent.length) return null;
-    const slots = recent.reduce((sum, s) => sum + s.slots_total, 0);
-    const filled = recent.reduce((sum, s) => sum + (s.ideas?.length ?? 0), 0);
-    return { shoots: recent.length, slots, filled, pct: Math.round((filled / slots) * 100) };
-  }, [shoots]);
 
   if (hydrating) {
     return (
@@ -452,8 +483,8 @@ export default function Home() {
               </h2>
               <p className="mb-3 text-sm text-neutral-400">
                 Instagram reels, YouTube videos, TikTok and X links get transcribed, one per line.
-                LinkedIn posts get read as text. More is better; under ten pieces is too thin to
-                read a style from. Anything already stored is reused rather than fetched again.
+                LinkedIn posts get read as text. Three pieces is enough to start; more is
+                better. Anything already stored is reused rather than fetched again.
               </p>
               <p className="mb-3 text-xs text-neutral-500">
                 A YouTube channel URL imports its 10 most recent videos. Each transcript is a
@@ -468,7 +499,7 @@ export default function Home() {
               />
               <button
                 onClick={analyze}
-                disabled={!!busy || (input.trim().length < 20 && pieces.length === 0)}
+                disabled={!!busy || (input.trim().length < 10 && pieces.length === 0)}
                 className="mt-3 rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
               >
                 {busy || (pieces.length ? "Add and re-read my style" : "Read my style")}
@@ -499,24 +530,99 @@ export default function Home() {
                   )}
                 </p>
 
-                {styleRead.niche && (
-                  <div className="mb-4 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                    <p className="text-xs uppercase tracking-wide text-neutral-500">Niche</p>
-                    <p className="mt-1 text-sm">{styleRead.niche}</p>
-                    {styleRead.keywords?.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {styleRead.keywords.map((k, i) => (
-                          <span
-                            key={i}
-                            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-xs text-neutral-400"
+                <div className="mb-4 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                  {keywordChoices.length > 0 && (
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-neutral-500">
+                        Which keywords are actually yours?
+                      </p>
+                      <p className="mb-2 text-xs text-neutral-500">
+                        Optional — untick anything that is not you, or leave them as they are.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {keywordChoices.map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => toggleChoice(c)}
+                            disabled={!!busy}
+                            className={`rounded border px-2 py-0.5 text-xs disabled:opacity-40 ${
+                              c.selected
+                                ? "border-neutral-600 bg-neutral-800 text-neutral-200"
+                                : "border-neutral-800 bg-neutral-950 text-neutral-600 line-through"
+                            }`}
                           >
-                            {k}
-                          </span>
+                            {c.label}
+                            {c.rationale === "added by you" && (
+                              <span className="ml-1 text-neutral-500">·you</span>
+                            )}
+                          </button>
                         ))}
                       </div>
-                    )}
-                  </div>
-                )}
+
+                      <div className="mt-2 flex gap-1.5">
+                        <input
+                          value={newKeyword}
+                          onChange={(e) => setNewKeyword(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") addKeyword();
+                          }}
+                          placeholder="Add a keyword the model missed"
+                          maxLength={60}
+                          className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs outline-none focus:border-neutral-600"
+                        />
+                        <button
+                          onClick={addKeyword}
+                          disabled={!!busy || !newKeyword.trim()}
+                          className="shrink-0 rounded border border-neutral-600 px-2 py-1 text-xs disabled:opacity-40"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {nicheChoices.length > 0 ? (
+                    <div className="mt-4 border-t border-neutral-800 pt-4">
+                      <p className="text-xs uppercase tracking-wide text-neutral-500">
+                        Which of these is your niche?
+                      </p>
+                      <p className="mb-2 text-xs text-neutral-500">
+                        Optional — tick any that fit. Leave them all and I&apos;ll use what I
+                        read: <span className="text-neutral-400">{styleRead.niche}</span>
+                      </p>
+                      <ul className="space-y-1.5">
+                        {nicheChoices.map((c) => (
+                          <li key={c.id}>
+                            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 p-2.5 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={c.selected}
+                                onChange={() => toggleChoice(c)}
+                                disabled={!!busy}
+                                className="mt-0.5 shrink-0"
+                              />
+                              <span>
+                                {c.label}
+                                {c.rationale && (
+                                  <span className="mt-0.5 block text-xs text-neutral-500">
+                                    {c.rationale}
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    styleRead.niche && (
+                      <div className={keywordChoices.length ? "mt-4 border-t border-neutral-800 pt-4" : ""}>
+                        <p className="text-xs uppercase tracking-wide text-neutral-500">Niche</p>
+                        <p className="mt-1 text-sm">{styleRead.niche}</p>
+                      </div>
+                    )
+                  )}
+                </div>
 
                 <ul className="space-y-2">
                   {patterns.map((p) => {
@@ -573,6 +679,18 @@ export default function Home() {
                   >
                     {busy === "Generating and gating ideas" ? "Thinking..." : "Give me ideas"}
                   </button>
+
+                  {/* A greyed-out button with no reason sends people hunting through the code.
+                      Rejecting every claim is a legitimate thing to do — usually it means the
+                      archive was not really your writing — so say that, and say what to do. */}
+                  {keptPatterns.length === 0 && (
+                    <p className="text-xs text-amber-400">
+                      Every style claim above is rejected, so there is nothing left describing
+                      your voice to write against. Restore at least one, or go back to step 1 and
+                      add pieces of your actual writing — if the claims were all wrong, the
+                      archive probably held links rather than text.
+                    </p>
+                  )}
                 </div>
               </section>
             )}
@@ -661,27 +779,6 @@ export default function Home() {
                             </button>
                           </>
                         )}
-                        {shoots.length > 0 && idea.verdict !== "repeat" && (
-                          <select
-                            value={idea.shoot_id ?? ""}
-                            onChange={(e) =>
-                              patchIdea(
-                                idea,
-                                { shootId: e.target.value || null },
-                                "Assigning the slot"
-                              )
-                            }
-                            disabled={!!busy}
-                            className="rounded-lg border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-400"
-                          >
-                            <option value="">no shoot</option>
-                            {shoots.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.scheduled_on}
-                              </option>
-                            ))}
-                          </select>
-                        )}
                       </div>
                     </li>
                   ))}
@@ -748,87 +845,6 @@ export default function Home() {
                 </div>
               </section>
             )}
-
-            {/* Shoots */}
-            <section className="mb-8 rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
-              <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-neutral-500">
-                Shoots — prepared-slot rate
-              </h2>
-              <p className="mb-4 text-sm text-neutral-400">
-                Add a shoot, then assign banked ideas to it from the bank above. The share of
-                slots that arrive with an idea ready is the number this whole thing is judged on.
-                The baseline to beat is 50-60%.
-              </p>
-
-              {recentRate && (
-                <div className="mb-4 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                  <p className="text-xs uppercase tracking-wide text-neutral-500">
-                    Last {recentRate.shoots} shoot(s)
-                  </p>
-                  <p className="mt-1 text-2xl font-semibold">
-                    {recentRate.pct}%
-                    <span className="ml-2 text-sm font-normal text-neutral-400">
-                      {recentRate.filled} of {recentRate.slots} slots prepared
-                    </span>
-                  </p>
-                  {recentRate.shoots < 3 && (
-                    <p className="mt-1 text-xs text-amber-400">
-                      The hypothesis is stated across three consecutive shoots. This is{" "}
-                      {recentRate.shoots}.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <div className="mb-4 flex flex-wrap gap-2">
-                <input
-                  type="date"
-                  value={shootDate}
-                  onChange={(e) => setShootDate(e.target.value)}
-                  className="rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-sm outline-none focus:border-neutral-600"
-                />
-                <input
-                  type="number"
-                  min="1"
-                  value={shootSlots}
-                  onChange={(e) => setShootSlots(e.target.value)}
-                  className="w-20 rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-sm outline-none focus:border-neutral-600"
-                />
-                <span className="self-center text-xs text-neutral-500">slots</span>
-                <button
-                  onClick={addShoot}
-                  disabled={!!busy || !shootDate}
-                  className="rounded-lg border border-neutral-600 px-3 py-2 text-xs disabled:opacity-40"
-                >
-                  Add shoot
-                </button>
-              </div>
-
-              {shoots.length > 0 && (
-                <ul className="space-y-2 text-sm">
-                  {shoots.map((s) => {
-                    const filled = s.ideas?.length ?? 0;
-                    const pct = Math.round((filled / s.slots_total) * 100);
-                    return (
-                      <li
-                        key={s.id}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3"
-                      >
-                        <span>{s.scheduled_on}</span>
-                        <span className="text-xs text-neutral-400">
-                          {filled} / {s.slots_total} prepared
-                          <span
-                            className={`ml-2 ${pct >= 75 ? "text-emerald-300" : "text-amber-400"}`}
-                          >
-                            {pct}%
-                          </span>
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
 
             {/* Run log */}
             {log.length > 0 && (

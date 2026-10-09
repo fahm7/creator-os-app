@@ -53,6 +53,20 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         )
       : [];
 
+    // The keyword and niche ticks, so a reload shows what the creator chose rather than
+    // resetting to the model's defaults.
+    const choices = styleRead
+      ? orThrow(
+          await supabase
+            .from("style_choices")
+            .select("*")
+            .eq("style_read_id", styleRead.id)
+            .order("kind", { ascending: true })
+            .order("ordinal", { ascending: true }),
+          "Loading the keyword and niche choices"
+        )
+      : [];
+
     const ideas = orThrow(
       await supabase
         .from("ideas")
@@ -71,26 +85,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       "Loading the run log"
     );
 
-    // The ideas join is load-bearing, not decoration: prepared-slot rate is counted from the
-    // ideas assigned to each shoot, so selecting bare columns here made the headline metric
-    // read 0% after every reload.
-    const shoots = orThrow(
-      await supabase
-        .from("shoots")
-        .select("*, ideas(id)")
-        .eq("creator_id", id)
-        .order("scheduled_on", { ascending: false }),
-      "Loading the shoots"
-    );
 
     return NextResponse.json({
       creator: creators[0],
       pieces,
       styleRead,
       patterns,
+      choices,
       ideas,
       reactions,
-      shoots,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
