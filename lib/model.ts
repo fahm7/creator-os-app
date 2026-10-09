@@ -70,6 +70,12 @@ export async function askModel(prompt: string, effort: "medium" | "high" = "high
       throw new Error("The model declined this request.");
     }
 
+    // Same truncation trap as the Groq branch below: a cut-off answer must not reach the JSON
+    // parser, which would blame malformed syntax for what is a length problem.
+    if (response.stop_reason === "max_tokens") {
+      throw new Error("The model's answer was cut off before it finished. Try again.");
+    }
+
     return response.content
       .filter((block): block is Anthropic.TextBlock => block.type === "text")
       .map((block) => block.text)
@@ -81,16 +87,36 @@ export async function askModel(prompt: string, effort: "medium" | "high" = "high
     baseURL: "https://api.groq.com/openai/v1",
   });
 
-  const completion = await withRateLimitRetry(() =>
-    groq.chat.completions.create({
-      model: GROQ_MODEL,
-      max_completion_tokens: GROQ_MAX_TOKENS,
-      // gpt-oss exposes a reasoning dial; the archive gate is a judgment call, so it gets the
-      // higher setting while outline writing does not need it.
-      reasoning_effort: effort,
-      messages: [{ role: "user", content: prompt }],
-    })
-  );
+  // gpt-oss exposes a reasoning dial; the archive gate is a judgment call, so it gets the
+  // higher setting while outline writing does not need it.
+  const ask = (reasoning: "medium" | "high") =>
+    withRateLimitRetry(() =>
+      groq.chat.completions.create({
+        model: GROQ_MODEL,
+        max_completion_tokens: GROQ_MAX_TOKENS,
+        reasoning_effort: reasoning,
+        messages: [{ role: "user", content: prompt }],
+      })
+    );
+
+  let completion = await ask(effort);
+
+  // Reasoning tokens count against max_completion_tokens, so a long answer can be cut off
+  // mid-JSON. Left unchecked that surfaced as "Expected ',' or ']'" from the parser, which
+  // blames the wrong thing and tells the creator nothing they can act on.
+  //
+  // High effort spends roughly three times the reasoning tokens of medium, so dropping a rung
+  // buys back room for the answer itself. Retrying at medium beats failing: the output target
+  // is unchanged, only the thinking budget shrinks.
+  if (completion.choices[0]?.finish_reason === "length" && effort === "high") {
+    completion = await ask("medium");
+  }
+
+  if (completion.choices[0]?.finish_reason === "length") {
+    throw new Error(
+      "The model's answer was cut off before it finished. Try again — or add ANTHROPIC_API_KEY to .env.local, which removes the token ceiling Groq's free tier imposes."
+    );
+  }
 
   return completion.choices[0]?.message?.content ?? "";
 }
