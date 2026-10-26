@@ -47,7 +47,7 @@ Read `node_modules/next/dist/docs/` per AGENTS.md, and the Supadata type definit
 5. **Shoots.** `POST`/`GET /api/shoots`, `PATCH /api/ideas/[id]` for slot assignment and
    `would_shoot`. UI shows prepared-slot rate per shoot and across the last three against the
    50-60% baseline.
-6. **Loose ends.** ESLint ignores for `.vercel` and `.next`; fix the two real `page.tsx`
+6. **Loose ends.** ESLint ignore for `.next`; fix the two real `page.tsx`
    findings; commit.
 7. **Verify.** tsc, build, lint, then run the app and push a real archive through all four steps,
    confirming rows land in Postgres. Report failures as failures.
@@ -91,7 +91,6 @@ consecutive shoots. Stage 5 builds the instrument; it cannot produce the measure
 - All four original routes — each now writes its step to Postgres and returns row ids.
 - `app/page.tsx` — name gate, hydration on mount, persisted pattern decisions, the idea bank,
   shoots with prepared-slot rate, run log from the database.
-- `eslint.config.mjs` — ignore `.vercel/**`.
 
 ### Three defects found and fixed while building
 

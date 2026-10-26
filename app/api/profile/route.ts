@@ -4,8 +4,6 @@ import { profilePrompt } from "@/lib/prompts";
 import { db, orThrow } from "@/lib/db";
 import type { Json } from "@/lib/database.types";
 
-export const maxDuration = 60;
-
 type Profile = {
   niche: string;
   nicheOptions: { label: string; rationale: string }[];

@@ -39,7 +39,7 @@ async function withRateLimitRetry<T>(run: () => Promise<T>): Promise<T> {
   } catch (error) {
     if (!isRateLimited(error)) throw error;
 
-    // One retry only: the route is capped at 60s on Vercel Hobby, and a second wait would not fit.
+    // One retry only, so a rate-limited request cannot wait indefinitely.
     await sleep(RETRY_WAIT_MS);
     try {
       return await run();

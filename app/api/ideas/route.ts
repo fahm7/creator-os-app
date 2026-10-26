@@ -3,8 +3,6 @@ import { askModel, extractJson, activeModel, activeProvider } from "@/lib/model"
 import { ideasPrompt } from "@/lib/prompts";
 import { db, orThrow } from "@/lib/db";
 
-export const maxDuration = 60;
-
 type Idea = {
   idea: string;
   mechanism: "kipling" | "reframe" | "vertical";

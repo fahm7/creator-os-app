@@ -42,8 +42,8 @@ const URL_ONLY = /^(\s*https?:\/\/\S+\s*)+$/i;
 // unbounded expansion could empty a 100-request free tier on one click.
 const CHANNEL_VIDEO_CAP = 10;
 
-// Route handlers are capped at 60s on Vercel Hobby, so polling a transcript job gets a budget
-// well inside that and reports a timeout as a note rather than failing the whole batch.
+// Polling a transcript job gets a fixed budget and reports a timeout as a note rather than
+// failing the whole batch.
 const JOB_BUDGET_MS = 35_000;
 const JOB_POLL_MS = 2_000;
 

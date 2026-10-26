@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { buildArchive } from "@/lib/archive";
 import { db, orThrow } from "@/lib/db";
 
-export const maxDuration = 60;
-
 // Turns whatever the creator pasted into labelled archive pieces, stores them, and returns the
 // whole archive rather than just this run's additions — the point of storing it is that it
 // accumulates across sessions instead of being retyped every time.
